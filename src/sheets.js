@@ -305,6 +305,94 @@ export async function addCategoryToUserSheet(userSheetId, tipo, nombre) {
   return { ok: true, existed: false };
 }
 
+// Asegura la hoja 'Presupuestos' con cabeceras
+async function ensurePresupuestosSheet(userSheetId) {
+  const sheets = await getSheetsClient();
+  try {
+    await sheets.spreadsheets.values.get({
+      spreadsheetId: userSheetId,
+      range: 'Presupuestos!A1:D1',
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    return true;
+  } catch {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: userSheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: 'Presupuestos' } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: userSheetId,
+      range: 'Presupuestos!A1:D1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [['tipo', 'categoria', 'presupuesto', 'periodo']] },
+    });
+    return true;
+  }
+}
+
+// Inserta o actualiza el presupuesto para (tipo,categoria,periodo)
+export async function upsertBudget(userSheetId, entry) {
+  const { tipo, categoria, presupuesto, periodo } = entry;
+  const sheets = await getSheetsClient();
+  await ensurePresupuestosSheet(userSheetId);
+
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: userSheetId,
+    range: 'Presupuestos!A:D',
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const rows = data.values || [];
+  if (rows.length === 0) {
+    // si por alguna razón no hay cabeceras, escríbelas
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: userSheetId,
+      range: 'Presupuestos!A1:D1',
+      valueInputOption: 'RAW',
+      requestBody: { values: [['tipo', 'categoria', 'presupuesto', 'periodo']] },
+    });
+  }
+
+  // Normaliza claves
+  const t = String(tipo || '').toUpperCase();
+  const c = String(categoria || '').trim();
+  const p = String(periodo || '').trim();
+
+  // Buscar coincidencia exacta (tipo, categoria, periodo)
+  let rowIndex = -1;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const rt = String(r[0] || '').toUpperCase();
+    const rc = String(r[1] || '').trim();
+    const rp = String(r[3] || '').trim();
+    if (rt === t && rc === c && rp === p) {
+      rowIndex = i;
+      break;
+    }
+  }
+
+  if (rowIndex !== -1) {
+    // update presupuesto en columna C
+    const targetRange = `Presupuestos!C${rowIndex + 1}`;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: userSheetId,
+      range: targetRange,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[presupuesto]] },
+    });
+    return { ok: true, updated: true };
+  }
+
+  // append nueva fila
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: userSheetId,
+    range: 'Presupuestos!A:D',
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[t, c, presupuesto, p]] },
+  });
+  return { ok: true, updated: false };
+}
+
 // Crea/actualiza las hojas Parametros y Dashboard con KPIs y tablas base
 export async function setupUserDashboard(userSheetId) {
   // Option C: El dashboard (Parametros, fórmulas y gráficos) viene preconfigurado en la plantilla.

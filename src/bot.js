@@ -4,7 +4,7 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 import { handleAdminMessage } from './admin.js';
-import { getSubscriber, appendMovimiento, setSubscriberFields, listUserCategories, addCategoryToUserSheet } from './sheets.js';
+import { getSubscriber, appendMovimiento, setSubscriberFields, listUserCategories, addCategoryToUserSheet, upsertBudget } from './sheets.js';
 import { driveClient } from './googleAuth.js';
 import { setupUserDashboard } from './sheets.js';
 import { isAdmin } from './utils.js';
@@ -74,8 +74,8 @@ function isValidEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '').trim());
 }
 
-// Estado conversacional para onboarding de suscriptores
-const userState = new Map(); // key: from (jid), value: { step: 'ASK_EMAIL'|'ASK_NAME'|'MENU'|'CAT'|'CAT_NEW'|'MONTO'|'CONFIRM', tipo, categorias, categoria, monto }
+// Estado conversacional para onboarding de suscriptores y menú guiado
+const userState = new Map(); // key: from (jid), value: { step: 'ASK_EMAIL'|'ASK_NAME'|'MENU'|'CAT'|'CAT_NEW'|'MONTO'|'CONFIRM'|'BUD_TIPO'|'BUD_CAT'|'BUD_CAT_NEW'|'BUD_MONTO'|'BUD_CONFIRM', tipo, categorias, categoria, monto }
 
 async function ensureUserSheetProvisioned(sub) {
   if (sub?.sheet_id) return sub;
@@ -108,6 +108,15 @@ async function ensureUserSheetProvisioned(sub) {
     });
   }
   return sub;
+}
+
+// Mes actual en Lima YYYY-MM
+function currentYmLima() {
+  const fmt = new Intl.DateTimeFormat('es-PE', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit' });
+  const parts = fmt.formatToParts(new Date());
+  const y = parts.find(p => p.type === 'year').value;
+  const m = parts.find(p => p.type === 'month').value.padStart(2, '0');
+  return `${y}-${m}`;
 }
 
 // Mensaje de ayuda para usuario
@@ -248,7 +257,7 @@ client.on('message', async (message) => {
     // Atajos globales de navegación
     if (/^(0|menu)$/i.test(body)) {
       userState.set(from, { step: 'MENU' });
-      await message.reply(['¿Qué deseas registrar?', '1) Ingreso', '2) Gasto'].join('\n'));
+      await message.reply(['¿Qué deseas realizar?', '1) Ingreso', '2) Gasto', '3) Presupuesto'].join('\n'));
       return;
     }
 
@@ -270,9 +279,15 @@ client.on('message', async (message) => {
         ].join('\n'));
         return;
       }
+      if (body === '3') {
+        st.step = 'BUD_TIPO';
+        userState.set(from, st);
+        await message.reply('Configurar presupuesto (mes actual):\n1) Ingreso\n2) Gasto\n\n0) Menú');
+        return;
+      }
       // Mostrar menú si no opción válida
       userState.set(from, { step: 'MENU' });
-      await message.reply(['¿Qué deseas registrar?', '1) Ingreso', '2) Gasto'].join('\n'));
+      await message.reply(['¿Qué deseas realizar?', '1) Ingreso', '2) Gasto', '3) Presupuesto'].join('\n'));
       return;
     }
 
@@ -358,6 +373,109 @@ client.on('message', async (message) => {
       // No/Cancelar
       userState.set(from, { step: 'MENU' });
       await message.reply('Cancelado. Volviendo al menú...\n1) Ingreso\n2) Gasto');
+      return;
+    }
+
+    // Presupuesto: seleccionar tipo
+    if (st.step === 'BUD_TIPO') {
+      if (body === '1' || body === '2') {
+        st.tipo = body === '1' ? 'INGRESO' : 'GASTO';
+        const cats = await listUserCategories(sub.sheet_id, st.tipo);
+        st.categorias = cats;
+        st.step = 'BUD_CAT';
+        userState.set(from, st);
+        await message.reply([
+          `Selecciona categoría para presupuesto de ${st.tipo}:`,
+          ...cats.map((c, i) => `${i + 1}) ${c}`),
+          '99) Agregar nueva categoría',
+          '',
+          '0) Menú'
+        ].join('\n'));
+        return;
+      }
+      await message.reply('Responde 1 (Ingreso) o 2 (Gasto).\n0) Menú');
+      return;
+    }
+
+    // Presupuesto: categoría
+    if (st.step === 'BUD_CAT') {
+      if (body === '99') {
+        st.step = 'BUD_CAT_NEW';
+        userState.set(from, st);
+        await message.reply(`Escribe el nombre de la nueva categoría para ${st.tipo}:\n0) Menú`);
+        return;
+      }
+      const idx = Number(body) - 1;
+      if (Number.isInteger(idx) && idx >= 0 && st.categorias && idx < st.categorias.length) {
+        st.categoria = st.categorias[idx];
+        st.step = 'BUD_MONTO';
+        userState.set(from, st);
+        await message.reply('Ingresa el presupuesto (monto positivo).\nNota: aplica al mes actual.\n0) Menú');
+        return;
+      }
+      await message.reply('Elige una opción válida o 0 para volver al menú.');
+      return;
+    }
+
+    // Presupuesto: nueva categoría
+    if (st.step === 'BUD_CAT_NEW') {
+      const nombre = body.trim().slice(0, 60);
+      if (!nombre) {
+        await message.reply('Nombre inválido. Envía un nombre o 0 para menú.');
+        return;
+      }
+      try {
+        await addCategoryToUserSheet(sub.sheet_id, st.tipo, nombre);
+        st.categoria = nombre;
+        st.step = 'BUD_MONTO';
+        userState.set(from, st);
+        await message.reply(`Categoría '${nombre}' lista. Ingresa el presupuesto (monto positivo).\nNota: aplica al mes actual.\n0) Menú`);
+      } catch (e) {
+        console.error('[BUD_CAT_NEW ERROR]', e);
+        await message.reply('No pude agregar la categoría. Intenta de nuevo o usa 0 para volver al menú.');
+      }
+      return;
+    }
+
+    // Presupuesto: monto
+    if (st.step === 'BUD_MONTO') {
+      const m = parseMonto(body);
+      if (!Number.isFinite(m) || m <= 0) {
+        await message.reply('Monto inválido. Ingresa un número positivo.\n0) Menú');
+        return;
+      }
+      st.monto = Math.abs(m);
+      st.step = 'BUD_CONFIRM';
+      userState.set(from, st);
+      const ym = currentYmLima();
+      await message.reply([
+        'Vas a asignar presupuesto:',
+        `• Tipo: ${st.tipo}`,
+        `• Categoría: ${st.categoria}`,
+        `• Monto: ${st.monto}`,
+        `• Mes: ${ym}`,
+        '',
+        '¿Confirmas? 1) Sí  2) No'
+      ].join('\n'));
+      return;
+    }
+
+    // Presupuesto: confirmación
+    if (st.step === 'BUD_CONFIRM') {
+      if (body === '1') {
+        const ym = currentYmLima();
+        try {
+          await upsertBudget(sub.sheet_id, { tipo: st.tipo, categoria: st.categoria, presupuesto: st.monto, periodo: ym });
+          await message.reply(`✅ Presupuesto guardado para ${st.tipo} • ${st.categoria} • Mes ${ym}.\n0) Menú`);
+        } catch (e) {
+          console.error('[UPSERT BUDGET ERROR]', e);
+          await message.reply('⚠️ No se pudo guardar el presupuesto. Informa al administrador.');
+        }
+        userState.set(from, { step: 'MENU' });
+        return;
+      }
+      userState.set(from, { step: 'MENU' });
+      await message.reply('Cancelado. Volviendo al menú...\n1) Ingreso\n2) Gasto\n3) Presupuesto');
       return;
     }
 
