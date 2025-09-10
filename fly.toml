@@ -1,0 +1,24 @@
+app = "whatsapp-finanzas-bot-xyz" # cambia el nombre (único en tu org)
+primary_region = "mia"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  TZ = "America/Lima"
+
+# Sin servicios HTTP; proceso tipo worker
+[processes]
+  bot = "node src/bot.js"
+
+# Monta volumen para persistir la sesión de WhatsApp Web
+[[mounts]]
+  source = "bot_data"
+  destination = "/app/.wwebjs_auth"
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
