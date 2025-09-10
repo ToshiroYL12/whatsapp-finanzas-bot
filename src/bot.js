@@ -4,7 +4,7 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 import { handleAdminMessage } from './admin.js';
-import { getSubscriber, appendMovimiento, setSubscriberFields, listUserCategories, addCategoryToUserSheet, upsertBudget } from './sheets.js';
+import { getSubscriber, appendMovimiento, setSubscriberFieldsSafe as setSubscriberFields, listUserCategories, addCategoryToUserSheet, upsertBudget } from './sheets.js';
 import { driveClient } from './googleAuth.js';
 import { setupUserDashboard } from './sheets.js';
 import { isAdmin } from './utils.js';
@@ -199,12 +199,6 @@ client.on('message', async (message) => {
           sub = await getSubscriber(from);
           userState.set(from, { step: 'ASK_NAME' });
           await message.reply('Listo. Guardé tu correo. Ahora, ¿cómo quieres que te llame? (tu nombre)');
-          // Intentar provisionar sheet ya con email
-          try {
-            await ensureUserSheetProvisioned(sub);
-          } catch (e) {
-            console.error('[PROVISION ERROR][email step]', e);
-          }
           return;
         } else {
           userState.set(from, { step: 'ASK_EMAIL' });
@@ -217,10 +211,11 @@ client.on('message', async (message) => {
     // 2) Sheet provisioning si falta
     if (!sub?.sheet_id) {
       try {
-        await ensureUserSheetProvisioned(sub);
-        // Refrescar suscriptor en memoria
+        const provisioned = await ensureUserSheetProvisioned(sub);
+        // Refrescar suscriptor en memoria (puede tardar en reflejarse); usa fallback
         sub = await getSubscriber(from);
-        await message.reply(`He creado tu Excel y lo compartí contigo. Accede aquí: ${sub.sheet_url}`);
+        const link = sub?.sheet_url || provisioned?.sheet_url;
+        await message.reply(`He creado tu Excel y lo compartí contigo. Accede aquí: ${link || 'revisa tu Google Drive; si no ves el link, responde 0 para reintentar'}`);
       } catch (e) {
         console.error('[PROVISION ERROR]', e);
         await message.reply('No pude crear/compartir tu Excel. Informa al administrador.');

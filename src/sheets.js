@@ -154,6 +154,47 @@ export async function setSubscriberFields(phoneRaw, fields) {
   return { ok: true, updated: dataUpdates.length };
 }
 
+// Versión segura que realmente escribe en 'Suscriptores'
+export async function setSubscriberFieldsSafe(phoneRaw, fields) {
+  const sheets = await getSheetsClient();
+  const phone = normPhone(phoneRaw);
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: ADMIN_SHEET_ID,
+    range: SUSCRIPTORES_RANGE,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  const rows = data.values || [];
+  if (rows.length === 0) throw new Error('Suscriptores vacío');
+  const headers = rows[0].map(h => String(h).trim().toLowerCase());
+  const idxTelefono = headers.indexOf('telefono');
+  if (idxTelefono === -1) throw new Error('Falta columna telefono en Suscriptores');
+
+  let rowIndex = -1;
+  for (let i = 1; i < rows.length; i++) {
+    const t = normPhone(rows[i][idxTelefono] || '');
+    if (t === phone) { rowIndex = i; break; }
+  }
+  if (rowIndex === -1) throw new Error('Teléfono no encontrado');
+
+  const dataUpdates = [];
+  for (const [key, val] of Object.entries(fields || {})) {
+    const colIndex = headers.indexOf(String(key).toLowerCase());
+    if (colIndex === -1) continue;
+    const colLetter = String.fromCharCode(65 + colIndex);
+    dataUpdates.push({
+      range: `Suscriptores!${colLetter}${rowIndex + 1}`,
+      values: [[val == null ? '' : String(val)]],
+    });
+  }
+  if (dataUpdates.length === 0) return { ok: true, updated: 0 };
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: ADMIN_SHEET_ID,
+    requestBody: { valueInputOption: 'RAW', data: dataUpdates },
+  });
+  return { ok: true, updated: dataUpdates.length };
+}
+
 // Agrega nuevo suscriptor (teléfono + autorizado=TRUE). Si existe, solo autoriza
 export async function addSubscriber(phoneRaw) {
   const sheets = await getSheetsClient();
