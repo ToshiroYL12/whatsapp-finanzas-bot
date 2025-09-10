@@ -1,0 +1,2 @@
+InicioMes,FinMes,InicioMesText,FinMesText
+=EOMONTH(TODAY(),-1)+1,=EOMONTH(TODAY(),0),=TEXT(A2,"yyyy-mm-dd"),=TEXT(B2,"yyyy-mm-dd")

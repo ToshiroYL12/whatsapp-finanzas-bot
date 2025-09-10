@@ -1,14 +1,17 @@
 export const normalizePhone = (raw) => {
   if (!raw) return "";
-  // whatsapp-web.js suele entregar "1234567890@c.us"
-  const base = raw.split("@")[0];
+  // whatsapp-web.js suele entregar "51999999999@c.us"; nos quedamos con la parte numérica
+  const base = String(raw).split("@")[0].replace(/\s/g, "");
+  // Si ya viene con "+" la dejamos, si no la agregamos
   return base.startsWith("+") ? base : `+${base}`;
 };
 
 export const isAdmin = (phone) => {
-  const admin = process.env.ADMIN_PHONE?.replace(/\s/g, "");
-
-  return admin && phone.replace(/\s/g, "") === admin;
+  const envRaw = process.env.ADMIN_PHONE || "";
+  const admin = normalizePhone(envRaw);
+  const who = normalizePhone(phone);
+  if (!admin || !who) return false;
+  return who === admin;
 };
 
 export const replyMenu = async (msg, lines) => {

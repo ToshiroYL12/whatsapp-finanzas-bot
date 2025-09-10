@@ -12,3 +12,8 @@ export async function getAuth() {
   auth.setCredentials(tokens);
   return auth;
 }
+
+export async function driveClient() {
+  const auth = await getAuth();
+  return google.drive({ version: 'v3', auth });
+}

@@ -16,3 +16,4 @@ yarn-error.log
 # Otros
 .DS_Store
 Thumbs.db
+temp_*.txt

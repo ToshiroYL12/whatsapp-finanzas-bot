@@ -1,0 +1,6 @@
+id,fecha,tipo,categoria,monto,detalle
+M1A2B3C4,2025-09-02,INGRESO,Sueldo,2500,Septiembre
+M2D4E6F8,2025-09-03,GASTO,Comida,-25.50,Almuerzo
+M3G5H7J9,2025-09-04,GASTO,Transporte,-12.00,Bus
+M4K6L8M0,2025-09-05,INGRESO,Ventas,180.00,Venta #123
+M5N7P9Q1,2025-09-06,GASTO,Servicios,-120.00,Electricidad
