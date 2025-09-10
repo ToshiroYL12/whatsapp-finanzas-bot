@@ -128,7 +128,8 @@ function ayudaUsuario() {
 /** --------- App logic --------- **/
 
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: '.wwebjs_auth' }),
+  // Permite cambiar la ruta de sesión con SESSION_DIR (ej. "/data/session")
+  authStrategy: new LocalAuth({ dataPath: process.env.SESSION_DIR || '.wwebjs_auth' }),
   puppeteer: {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
